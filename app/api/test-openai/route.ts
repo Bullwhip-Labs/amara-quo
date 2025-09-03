@@ -3,7 +3,7 @@
 // Helps diagnose empty response issues
 
 import { NextResponse } from 'next/server'
-import { llmService } from '@/lib/services/llm-service'
+import { llmFactory } from '@/lib/services/llm-factory'
 
 export async function GET() {
   try {
@@ -12,6 +12,10 @@ export async function GET() {
     const maxTokens = parseInt(process.env.OPENAI_MAX_TOKENS || '500')
 
     console.log('🧪 Testing OpenAI configuration...')
+
+    // Get the appropriate service
+    const llmService = llmFactory.getService()
+    const modelType = llmFactory.getModelType()
 
     // First test basic connection
     const connectionTest = await llmService.testConnection()
@@ -22,24 +26,33 @@ export async function GET() {
       try {
         console.log('🧪 Testing completion with model:', model)
         
-        // Build request body - handle different parameter names
+        // Build request body based on model type
         const requestBody: any = {
           model: model,
-          messages: [
-            { role: 'system', content: 'You are a helpful assistant.' },
-            { role: 'user', content: 'Say "Hello, this is a test response from OpenAI!"' }
-          ],
           temperature: 0.7
         }
 
-        // Use the right parameter based on model
-        if (model.includes('gpt-4o')) {
-          requestBody.max_completion_tokens = 50
+        if (modelType === 'gpt-5') {
+          // GPT-5 uses Responses API
+          requestBody.input = [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: 'Say "Hello, this is a test response from OpenAI!"' }
+          ]
+          requestBody.max_output_tokens = 50
         } else {
+          // GPT-4 uses Chat Completions API
+          requestBody.messages = [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: 'Say "Hello, this is a test response from OpenAI!"' }
+          ]
           requestBody.max_tokens = 50
         }
 
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        const endpoint = modelType === 'gpt-5' 
+          ? 'https://api.openai.com/v1/responses'
+          : 'https://api.openai.com/v1/chat/completions'
+
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -54,16 +67,27 @@ export async function GET() {
           status: response.status,
           ok: response.ok,
           model: data.model,
-          hasChoices: !!data.choices,
-          contentLength: data.choices?.[0]?.message?.content?.length || 0,
+          hasContent: modelType === 'gpt-5' 
+            ? !!data.output_text || !!data.output 
+            : !!data.choices,
           usage: data.usage,
           error: data.error
         })
 
         if (response.ok) {
+          let content = ''
+          
+          if (modelType === 'gpt-5') {
+            // GPT-5 response format
+            content = data.output_text || data.output?.[0]?.content?.[0]?.text || 'No content'
+          } else {
+            // GPT-4 response format
+            content = data.choices?.[0]?.message?.content || 'No content'
+          }
+
           completionTest = {
             success: true,
-            response: data.choices?.[0]?.message?.content || 'No content',
+            response: content,
             usage: data.usage,
             model: data.model
           }
@@ -116,12 +140,30 @@ export async function GET() {
       }
     }
 
-    const result = {
+    // Explicitly type the result object
+    const result: {
+      configuration: {
+        hasApiKey: boolean
+        model: string
+        modelType: string
+        maxTokens: number
+        apiKeyPreview: string | null
+        useStructuredOutput?: boolean
+      }
+      tests: {
+        connection: typeof connectionTest
+        simpleCompletion: typeof completionTest
+        emailProcessing: typeof emailTest
+      }
+      recommendations: string[]
+    } = {
       configuration: {
         hasApiKey: !!apiKey,
         model: model,
+        modelType: modelType,
         maxTokens: maxTokens,
-        apiKeyPreview: apiKey ? `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}` : null
+        apiKeyPreview: apiKey ? `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}` : null,
+        useStructuredOutput: process.env.USE_STRUCTURED_OUTPUT === 'true'
       },
       tests: {
         connection: connectionTest,
@@ -144,6 +186,9 @@ export async function GET() {
     if (emailTest && !emailTest.success) {
       result.recommendations.push('Check the email processing pipeline')
     }
+    if (modelType === 'gpt-4' && model.includes('gpt-4o')) {
+      result.recommendations.push('Consider enabling USE_STRUCTURED_OUTPUT=true for richer email metadata')
+    }
 
     return NextResponse.json(result)
 
@@ -156,7 +201,8 @@ export async function GET() {
         message: error instanceof Error ? error.message : 'Unknown error',
         configuration: {
           hasApiKey: !!process.env.OPENAI_API_KEY,
-          model: process.env.OPENAI_MODEL || 'gpt-4o-mini'
+          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          modelType: llmFactory.getModelType()
         }
       },
       { status: 500 }

@@ -3,6 +3,7 @@
 // Simplified implementation using Responses API
 
 import { ProcessedEmail } from '@/lib/kv-client'
+import { LLMPrompts } from './llm-prompts'
 
 export interface LLMResponse {
   content: string
@@ -25,7 +26,6 @@ class LLMService {
   private apiKey: string
   private model: string
   private maxTokens: number
-  private systemPrompt: string
   private maxRetries: number = 3
   private baseDelay: number = 1000
 
@@ -33,10 +33,14 @@ class LLMService {
     this.apiKey = process.env.OPENAI_API_KEY || ''
     this.model = process.env.OPENAI_MODEL || 'gpt-5-nano'
     this.maxTokens = parseInt(process.env.OPENAI_MAX_TOKENS || '1000')
-    this.systemPrompt = process.env.SYSTEM_PROMPT || this.getDefaultSystemPrompt()
 
     if (!this.apiKey) {
       console.warn('⚠️ OPENAI_API_KEY not configured')
+    }
+
+    // Validate model is GPT-5 series
+    if (!this.model.includes('gpt-5')) {
+      console.warn(`⚠️ Model ${this.model} is not a GPT-5 series model. Consider using llm-service-gpt-4.ts for GPT-4 models.`)
     }
 
     console.log('🤖 GPT-5 Service initialized:', {
@@ -45,14 +49,6 @@ class LLMService {
       hasApiKey: !!this.apiKey
     })
   }
-
-  private getDefaultSystemPrompt(): string {
-    return `You are Amara QUO, a savvy and professional sales rep.
-1. Analyze incoming emails and understand their context and urgency
-2. Provide a quote or response based on your knowledge of domain and data
-3. Keep responses under 150 words unless complexity demands more
-Always be respectful, clear, and actionable in your responses.`
-  }
   
   /**
    * Process an email with GPT-5
@@ -60,19 +56,18 @@ Always be respectful, clear, and actionable in your responses.`
   async processEmail(email: ProcessedEmail): Promise<LLMResponse> {
     const startTime = Date.now()
     
+    // Use prompts from centralized location
+    const systemPrompt = LLMPrompts.getSystemPrompt()
+    const userContent = LLMPrompts.formatEmailForProcessing({
+      from: email.from,
+      subject: email.subject,
+      receivedAt: email.receivedAt,
+      body: email.body || email.snippet
+    })
+    
     const input = [
-      { role: 'system', content: this.systemPrompt },
-      { 
-        role: 'user', 
-        content: `From: ${email.from}
-Subject: ${email.subject}
-Received: ${new Date(email.receivedAt).toLocaleString()}
-
-Message:
-${email.body || email.snippet}
-
-Please analyze this email and provide an appropriate response.`
-      }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent }
     ]
 
     console.log('📝 Processing email:', email.subject)
@@ -158,22 +153,8 @@ Please analyze this email and provide an appropriate response.`
         }
       }
 
-      // Extract content from response
-      let content = ''
-      
-      // Simple extraction - look for output_text first
-      if (data.output_text) {
-        content = data.output_text
-      } 
-      // Then check output array for message
-      else if (data.output && Array.isArray(data.output)) {
-        for (const output of data.output) {
-          if (output.type === 'message' && output.content?.[0]?.text) {
-            content = output.content[0].text
-            break
-          }
-        }
-      }
+      // Extract content from response using centralized parser
+      const content = LLMPrompts.parseModelResponse(data, 'gpt-5')
       
       if (!content) {
         console.error('❌ No text content found in response')
@@ -253,23 +234,48 @@ Please analyze this email and provide an appropriate response.`
   /**
    * Test connection
    */
-  async testConnection(): Promise<{ success: boolean; message: string }> {
+  async testConnection(): Promise<{ success: boolean; message: string; model?: string }> {
     try {
       if (!this.apiKey) {
         return { success: false, message: 'API key not configured' }
       }
 
-      const response = await fetch('https://api.openai.com/v1/models', {
-        headers: { 'Authorization': `Bearer ${this.apiKey}` }
+      // Test with a simple request to the Responses API
+      const response = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: this.model,
+          input: [
+            { role: 'system', content: LLMPrompts.getTestPrompt() },
+            { role: 'user', content: 'Say "Hello, GPT-5 connection test successful!"' }
+          ],
+          max_output_tokens: 20
+        })
       })
 
+      const data = await response.json()
+
       if (response.ok) {
-        return { success: true, message: 'Connection successful' }
+        return { 
+          success: true, 
+          message: 'Connection successful',
+          model: data.model || this.model
+        }
       } else {
-        return { success: false, message: `Failed: ${response.status}` }
+        return { 
+          success: false, 
+          message: `Failed: ${response.status} - ${data.error?.message || 'Unknown error'}`
+        }
       }
     } catch (error) {
-      return { success: false, message: `Error: ${(error as Error).message}` }
+      return { 
+        success: false, 
+        message: `Error: ${(error as Error).message}` 
+      }
     }
   }
 }
