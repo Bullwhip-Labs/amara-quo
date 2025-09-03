@@ -1,26 +1,218 @@
+/* /app/globals.css */
+/* Amara QUO Intelligence Monitor - Design System */
+
 @import "tailwindcss";
 
+/* ===========================
+   DESIGN TOKENS (CSS Vars)
+   =========================== */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Fonts */
+  --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Monaco, 'Cascadia Code', monospace;
+
+  /* Base colors */
+  --color-background: #FFFFFF;
+  --color-surface: #FAFAFA;
+  --color-foreground: #18181B;
+  --color-muted: #71717A;
+  --color-border: #E4E4E7;
+  --color-border-strong: #D4D4D8;
+
+  /* Amara QUO Agent Colors */
+  --amara-purple: #7C3AED;
+  --amara-purple-soft: #A78BFA;
+  --amara-purple-faint: #EDE9FE;
+  --thinking-amber: #F59E0B;
+  --thinking-amber-soft: #FCD34D;
+  --synthesis-green: #10B981;
+  --synthesis-green-soft: #34D399;
+  --neural-blue: #3B82F6;
+  --review-amber: #F97316;
+  
+  /* Gradients */
+  --neural-gradient: linear-gradient(135deg, #7C3AED 0%, #3B82F6 100%);
+  --success-gradient: linear-gradient(135deg, #10B981 0%, #34D399 100%);
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  --shadow-glow: 0 0 20px rgba(124, 58, 237, 0.15);
+
+  /* Motion curves */
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Safe areas */
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-left: env(safe-area-inset-left);
+  --safe-right: env(safe-area-inset-right);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* Dark theme surface mapping */
+[data-theme="dark"] {
+  --color-background: #0B0B0D;
+  --color-surface: #1C1C20;
+  --color-foreground: #FAFAFA;
+  --color-muted: #A1A1AA;
+  --color-border: #3F3F46;
+  --color-border-strong: #52525B;
+  --amara-purple-faint: #2E1065;
+  --shadow-glow: 0 0 30px rgba(167, 139, 250, 0.25);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ===========================
+   BASE
+   =========================== */
+
+@layer base {
+  html, body { min-height: 100%; }
+  body {
+    @apply antialiased;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Headings */
+  h1, h2, h3, h4, h5, h6 { font-weight: 600; line-height: 1.25; }
+  h1 { font-size: 2.25rem; letter-spacing: -0.025em; }
+  h2 { font-size: 1.875rem; letter-spacing: -0.025em; }
+  h3 { font-size: 1.5rem; letter-spacing: -0.02em; }
+  h4 { font-size: 1.25rem; }
+  p { color: var(--color-muted); line-height: 1.75; }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid var(--amara-purple);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ===========================
+   AMARA QUO ANIMATIONS
+   =========================== */
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.95); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes neural-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes dot-pulse {
+  0%, 60%, 100% { opacity: 0.3; }
+  30% { opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes sparkle {
+  0%, 100% { opacity: 0; transform: scale(0); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* Agent State Animations */
+.agent-thinking {
+  animation: thinking-pulse 2s ease-in-out infinite;
+}
+
+.neural-border {
+  background: var(--neural-gradient);
+  background-size: 200% 200%;
+  animation: neural-flow 3s ease infinite;
+}
+
+.dot-1 { animation: dot-pulse 1.4s ease-in-out infinite; }
+.dot-2 { animation: dot-pulse 1.4s ease-in-out 0.2s infinite; }
+.dot-3 { animation: dot-pulse 1.4s ease-in-out 0.4s infinite; }
+
+/* Utility classes */
+.glow-purple {
+  box-shadow: var(--shadow-glow);
+}
+
+.text-gradient {
+  background: var(--neural-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ===========================
+   RESPONSIVE
+   =========================== */
+
+@media (max-width: 768px) {
+  input, select, textarea { font-size: 16px !important; }
+  button, input, select, textarea, .touch-target { min-height: 48px; }
+}
+
+/* ===========================
+   PRINT & REDUCED MOTION
+   =========================== */
+
+@media print {
+  .no-print { display: none !important; }
+  body { font-size: 12pt; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ===========================
+   TOAST (Sonner)
+   =========================== */
+
+[data-sonner-toaster] {
+  --width: 380px;
+  --gap: 12px;
+}
+
+[data-sonner-toast] {
+  font-family: var(--font-sans) !important;
+  font-size: 15px !important;
+  padding: 16px !important;
+  border-radius: var(--radius-md) !important;
+  border: 2px solid var(--color-border) !important;
+  background: var(--color-background) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+[data-sonner-toast][data-type="success"] { 
+  border-color: var(--synthesis-green) !important; 
+  border-left-width: 4px !important;
+}
+
+[data-sonner-toast][data-type="error"] { 
+  border-color: var(--review-amber) !important;
+  border-left-width: 4px !important;
 }
