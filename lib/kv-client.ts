@@ -1,6 +1,6 @@
 // /lib/kv-client.ts
-// Vercel KV (Upstash) client configuration and helper functions
-// Provides methods for email data management and queue operations
+// Vercel KV client with minimal logging
+// Clean version without verbose debug output
 
 import { kv } from '@vercel/kv'
 
@@ -18,7 +18,6 @@ export interface EmailRecord {
   historyId: number
 }
 
-// Define status type separately for clarity
 export type EmailStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'manual-review'
 
 export interface ProcessedEmail extends EmailRecord {
@@ -37,7 +36,7 @@ export interface ProcessedEmail extends EmailRecord {
   deliveredAt?: string
 }
 
-// Key patterns for KV storage - matching your existing gmail: prefix
+// Key patterns for KV storage
 const KEYS = {
   EMAIL: (id: string) => `gmail:email:${id}`,
   EMAIL_STATUS: (id: string) => `gmail:email:${id}:status`,
@@ -53,17 +52,14 @@ const KEYS = {
 
 // Helper functions for email management
 export const emailStore = {
-  // Get all emails with their status - including scanning for existing emails
+  // Get all emails with their status
   async getAllEmails(): Promise<ProcessedEmail[]> {
-    // First try to get from our set
     let emailIds = await kv.smembers(KEYS.ALL_EMAILS)
     
-    // If no emails in set, scan for existing gmail:email:* keys
     if (!emailIds || emailIds.length === 0) {
       const allKeys = await kv.keys('gmail:email:*')
       emailIds = allKeys
         .filter(key => {
-          // Only get base email keys, not status or response keys
           const keyStr = key as string
           return keyStr.startsWith('gmail:email:') && 
                  !keyStr.includes(':status') && 
@@ -79,9 +75,7 @@ export const emailStore = {
           return keyStr.replace('gmail:email:', '')
         })
       
-      // Add discovered emails to our set for future use
       if (emailIds.length > 0) {
-        // Add each email ID individually to avoid TypeScript spread issues
         for (const emailId of emailIds) {
           await kv.sadd(KEYS.ALL_EMAILS, emailId)
         }
@@ -101,9 +95,9 @@ export const emailStore = {
     )
   },
 
-  // Get single email with status and response
+  // Get single email with status and response - SILENT
   async getEmail(id: string): Promise<ProcessedEmail | null> {
-    const [emailData, status, response] = await Promise.all([
+    const [emailData, statusData, responseData] = await Promise.all([
       kv.get<EmailRecord>(KEYS.EMAIL(id)),
       kv.get<{
         status: EmailStatus
@@ -119,19 +113,24 @@ export const emailStore = {
       kv.get<string>(KEYS.EMAIL_RESPONSE(id))
     ])
 
-    if (!emailData) return null
+    if (!emailData) {
+      return null
+    }
+
+    // Get response from either location
+    const response = responseData || statusData?.response
 
     return {
       ...emailData,
-      status: status?.status || 'pending',
-      processedAt: status?.processedAt,
-      error: status?.error,
-      response: response || status?.response,
-      category: status?.category,
-      tokenUsage: status?.tokenUsage,
-      processingTime: status?.processingTime,
-      deliveryStatus: status?.deliveryStatus,
-      deliveredAt: status?.deliveredAt
+      status: statusData?.status || 'pending',
+      processedAt: statusData?.processedAt,
+      error: statusData?.error,
+      response: response,
+      category: statusData?.category,
+      tokenUsage: statusData?.tokenUsage,
+      processingTime: statusData?.processingTime,
+      deliveryStatus: statusData?.deliveryStatus,
+      deliveredAt: statusData?.deliveredAt
     }
   },
 
@@ -148,7 +147,7 @@ export const emailStore = {
     ])
   },
 
-  // Update email status with LLM response data
+  // Update email status with LLM response data - MINIMAL LOGGING
   async updateEmailStatus(
     id: string, 
     status: EmailStatus,
@@ -163,27 +162,46 @@ export const emailStore = {
       deliveredAt?: string
     }
   ): Promise<void> {
+    // Only log significant updates (with responses or errors)
+    if (metadata?.response !== undefined || metadata?.error) {
+      console.log(`📝 Updating email ${id}: status=${status}${metadata?.response ? ` response=${metadata.response.length} chars` : ''}${metadata?.error ? ` error="${metadata.error}"` : ''}`)
+    }
+
     const currentStatus = await kv.get<any>(KEYS.EMAIL_STATUS(id)) || {}
     
     const statusData = {
       ...currentStatus,
       status,
-      ...(metadata?.processedAt ? { processedAt: metadata.processedAt } : {}),
+      ...(metadata?.processedAt !== undefined ? { processedAt: metadata.processedAt } : {}),
       ...(metadata?.error !== undefined ? { error: metadata.error } : {}),
-      ...(metadata?.response !== undefined ? { response: metadata.response } : {}), // Store response here too
-      ...(metadata?.category ? { category: metadata.category } : {}),
-      ...(metadata?.tokenUsage ? { tokenUsage: metadata.tokenUsage } : {}),
+      ...(metadata?.response !== undefined ? { response: metadata.response } : {}),
+      ...(metadata?.category !== undefined ? { category: metadata.category } : {}),
+      ...(metadata?.tokenUsage !== undefined ? { tokenUsage: metadata.tokenUsage } : {}),
       ...(metadata?.processingTime !== undefined ? { processingTime: metadata.processingTime } : {}),
-      ...(metadata?.deliveryStatus ? { deliveryStatus: metadata.deliveryStatus } : {}),
-      ...(metadata?.deliveredAt ? { deliveredAt: metadata.deliveredAt } : {})
+      ...(metadata?.deliveryStatus !== undefined ? { deliveryStatus: metadata.deliveryStatus } : {}),
+      ...(metadata?.deliveredAt !== undefined ? { deliveredAt: metadata.deliveredAt } : {})
     }
 
+    // Store status data
     await kv.set(KEYS.EMAIL_STATUS(id), statusData)
 
-    // Also store response separately for larger responses
-    if (metadata?.response) {
-      await kv.set(KEYS.EMAIL_RESPONSE(id), metadata.response)
-      console.log(`💾 Stored response for email ${id} in both status and response keys`)
+    // Handle response storage/deletion
+    if (metadata?.response !== undefined) {
+      if (metadata.response) {
+        // Store response in separate key
+        await kv.set(KEYS.EMAIL_RESPONSE(id), metadata.response)
+        
+        // Only verify for actual LLM responses (not clearing)
+        if (status === 'completed') {
+          const verifyResponse = await kv.get<string>(KEYS.EMAIL_RESPONSE(id))
+          if (!verifyResponse) {
+            console.error(`⚠️ WARNING: Response storage verification failed for ${id}!`)
+          }
+        }
+      } else {
+        // Clear response when resetting
+        await kv.del(KEYS.EMAIL_RESPONSE(id))
+      }
     }
 
     // Update processing queue
@@ -257,18 +275,15 @@ export const emailStore = {
     }
   },
 
-  // Get last processed history ID
   async getLastHistoryId(): Promise<number> {
     const lastId = await kv.get<number>(KEYS.LAST_HISTORY_ID)
     return lastId || 0
   },
 
-  // Update last processed history ID
   async setLastHistoryId(historyId: number): Promise<void> {
     await kv.set(KEYS.LAST_HISTORY_ID, historyId)
   },
 
-  // Get pending emails
   async getPendingEmails(): Promise<string[]> {
     const emailIds = await kv.smembers(KEYS.ALL_EMAILS)
     const pending: string[] = []
@@ -283,13 +298,11 @@ export const emailStore = {
     return pending
   },
 
-  // Get emails in processing queue
   async getProcessingQueue(): Promise<string[]> {
     const members = await kv.zrange(KEYS.PROCESSING_QUEUE, 0, -1)
     return members as string[]
   },
 
-  // Get processing statistics
   async getProcessingStats(): Promise<{
     pending: number
     processing: number
@@ -329,7 +342,6 @@ export const emailStore = {
     return stats
   },
 
-  // Scan and import existing emails (one-time migration)
   async importExistingEmails(): Promise<number> {
     const allKeys = await kv.keys('gmail:email:*')
     const emailKeys = allKeys.filter(key => {
@@ -352,7 +364,6 @@ export const emailStore = {
       if (!existsInSet) {
         await kv.sadd(KEYS.ALL_EMAILS, id)
         
-        // Check if status exists, if not set to pending
         const statusExists = await kv.exists(KEYS.EMAIL_STATUS(id))
         if (!statusExists) {
           await kv.set(KEYS.EMAIL_STATUS(id), { status: 'pending' as EmailStatus })

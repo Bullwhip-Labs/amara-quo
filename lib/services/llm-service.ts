@@ -1,6 +1,6 @@
 // /lib/services/llm-service.ts
-// OpenAI GPT integration service for Amara QUO
-// Handles API calls, retries, and token tracking
+// OpenAI GPT-5 integration service for Amara QUO
+// Simplified implementation using Responses API
 
 import { ProcessedEmail } from '@/lib/kv-client'
 
@@ -16,7 +16,7 @@ export interface LLMResponse {
 }
 
 export interface LLMError {
-  code: 'rate_limit' | 'api_error' | 'invalid_request' | 'timeout'
+  code: 'rate_limit' | 'api_error' | 'invalid_request' | 'timeout' | 'empty_response'
   message: string
   retryAfter?: number
 }
@@ -27,36 +27,44 @@ class LLMService {
   private maxTokens: number
   private systemPrompt: string
   private maxRetries: number = 3
-  private baseDelay: number = 1000 // 1 second
+  private baseDelay: number = 1000
 
   constructor() {
     this.apiKey = process.env.OPENAI_API_KEY || ''
-    this.model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
-    this.maxTokens = parseInt(process.env.OPENAI_MAX_TOKENS || '500')
+    this.model = process.env.OPENAI_MODEL || 'gpt-5-nano'
+    this.maxTokens = parseInt(process.env.OPENAI_MAX_TOKENS || '1000')
     this.systemPrompt = process.env.SYSTEM_PROMPT || this.getDefaultSystemPrompt()
 
     if (!this.apiKey) {
       console.warn('⚠️ OPENAI_API_KEY not configured')
     }
+
+    console.log('🤖 GPT-5 Service initialized:', {
+      model: this.model,
+      maxTokens: this.maxTokens,
+      hasApiKey: !!this.apiKey
+    })
   }
 
   private getDefaultSystemPrompt(): string {
-    return `You are Amara QUO, an intelligent email assistant. Your role is to:
+    return `You are Amara QUO, a savvy and professional sales rep.
 1. Analyze incoming emails and understand their context and urgency
-2. Provide helpful, professional, and concise responses
-3. Identify action items and key information
-4. Maintain a friendly yet professional tone
-5. Keep responses under 150 words unless complexity demands more
-
+2. Provide a quote or response based on your knowledge of domain and data
+3. Keep responses under 150 words unless complexity demands more
 Always be respectful, clear, and actionable in your responses.`
   }
-
+  
   /**
-   * Build the prompt for the LLM
+   * Process an email with GPT-5
    */
-  buildPrompt(email: ProcessedEmail): { system: string; user: string } {
-    const user = `
-From: ${email.from}
+  async processEmail(email: ProcessedEmail): Promise<LLMResponse> {
+    const startTime = Date.now()
+    
+    const input = [
+      { role: 'system', content: this.systemPrompt },
+      { 
+        role: 'user', 
+        content: `From: ${email.from}
 Subject: ${email.subject}
 Received: ${new Date(email.receivedAt).toLocaleString()}
 
@@ -64,122 +72,152 @@ Message:
 ${email.body || email.snippet}
 
 Please analyze this email and provide an appropriate response.`
+      }
+    ]
 
-    return {
-      system: this.systemPrompt,
-      user: user.trim()
-    }
-  }
-
-  /**
-   * Process an email with GPT
-   */
-  async processEmail(email: ProcessedEmail): Promise<LLMResponse> {
-    const startTime = Date.now()
-    const prompt = this.buildPrompt(email)
+    console.log('📝 Processing email:', email.subject)
 
     try {
-      const response = await this.callOpenAI(prompt)
+      const response = await this.callGPT5(input)
+      
+      if (!response.content || response.content.trim().length === 0) {
+        throw { code: 'empty_response', message: 'Received empty response from GPT-5' }
+      }
+
+      console.log('✅ Response received:', {
+        contentLength: response.content.length,
+        tokens: response.tokenUsage
+      })
       
       return {
         ...response,
         processingTime: Date.now() - startTime
       }
     } catch (error) {
-      console.error('LLM processing failed:', error)
+      console.error('GPT-5 processing failed:', error)
       throw this.normalizeError(error)
     }
   }
 
   /**
-   * Make the actual API call to OpenAI with retry logic
+   * Call GPT-5 Responses API
    */
-  private async callOpenAI(
-    prompt: { system: string; user: string },
-    attempt: number = 1
-  ): Promise<LLMResponse> {
+  private async callGPT5(input: any[], attempt: number = 1): Promise<LLMResponse> {
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      // Simple request body - no reasoning
+      const requestBody = {
+        model: this.model,
+        input: input,
+        max_output_tokens: this.maxTokens
+      }
+
+      console.log(`📤 GPT-5 API call (attempt ${attempt})`)
+
+      const response = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.apiKey}`
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: prompt.system },
-            { role: 'user', content: prompt.user }
-          ],
-          max_completion_tokens: this.maxTokens
-          // Removed temperature and top_p as they're not supported by all models
-        })
+        body: JSON.stringify(requestBody)
       })
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        
-        // Handle rate limiting
-        if (response.status === 429) {
+        const errorText = await response.text()
+        console.error('❌ API Error:', response.status, errorText)
+
+        // Retry logic for rate limits and server errors
+        if (response.status === 429 && attempt < this.maxRetries) {
           const retryAfter = parseInt(response.headers.get('retry-after') || '60')
-          if (attempt < this.maxRetries) {
-            await this.delay(retryAfter * 1000)
-            return this.callOpenAI(prompt, attempt + 1)
-          }
-          throw { code: 'rate_limit', message: 'Rate limit exceeded', retryAfter }
+          console.log(`⏰ Rate limited, retrying in ${retryAfter}s`)
+          await this.delay(retryAfter * 1000)
+          return this.callGPT5(input, attempt + 1)
         }
 
-        // Handle other errors with retry
         if (response.status >= 500 && attempt < this.maxRetries) {
-          await this.delay(this.baseDelay * Math.pow(2, attempt - 1))
-          return this.callOpenAI(prompt, attempt + 1)
+          const delayMs = this.baseDelay * Math.pow(2, attempt - 1)
+          console.log(`⏰ Server error, retrying in ${delayMs}ms`)
+          await this.delay(delayMs)
+          return this.callGPT5(input, attempt + 1)
         }
 
         throw {
           code: response.status >= 500 ? 'api_error' : 'invalid_request',
-          message: error.error?.message || `API error: ${response.status}`
+          message: `GPT-5 API error: ${response.status}`
         }
       }
 
       const data = await response.json()
       
+      // Check response status
+      if (data.status === 'incomplete') {
+        console.error('❌ Incomplete response:', data.incomplete_details)
+        throw { 
+          code: 'empty_response', 
+          message: `Response incomplete: ${data.incomplete_details?.reason}` 
+        }
+      }
+
+      // Extract content from response
+      let content = ''
+      
+      // Simple extraction - look for output_text first
+      if (data.output_text) {
+        content = data.output_text
+      } 
+      // Then check output array for message
+      else if (data.output && Array.isArray(data.output)) {
+        for (const output of data.output) {
+          if (output.type === 'message' && output.content?.[0]?.text) {
+            content = output.content[0].text
+            break
+          }
+        }
+      }
+      
+      if (!content) {
+        console.error('❌ No text content found in response')
+        console.log('Response structure:', JSON.stringify(data, null, 2))
+        throw { code: 'empty_response', message: 'No text output from GPT-5' }
+      }
+      
       return {
-        content: data.choices[0]?.message?.content || '',
+        content: content,
         tokenUsage: {
-          prompt: data.usage?.prompt_tokens || 0,
-          completion: data.usage?.completion_tokens || 0,
+          prompt: data.usage?.input_tokens || 0,
+          completion: data.usage?.output_tokens || 0,
           total: data.usage?.total_tokens || 0
         },
         model: data.model || this.model,
-        processingTime: 0 // Will be set by caller
+        processingTime: 0
       }
     } catch (error) {
-      // If it's already a structured error, rethrow it
       if ((error as any).code) {
         throw error
       }
       
-      // Network or timeout errors
+      // Network error retry
       if (attempt < this.maxRetries) {
-        await this.delay(this.baseDelay * Math.pow(2, attempt - 1))
-        return this.callOpenAI(prompt, attempt + 1)
+        const delayMs = this.baseDelay * Math.pow(2, attempt - 1)
+        console.log(`⏰ Network error, retrying in ${delayMs}ms`)
+        await this.delay(delayMs)
+        return this.callGPT5(input, attempt + 1)
       }
       
       throw {
         code: 'timeout',
-        message: 'Request timeout or network error'
+        message: 'Network error: ' + (error as Error).message
       }
     }
   }
 
   /**
-   * Normalize errors to LLMError format
+   * Normalize errors
    */
   private normalizeError(error: any): LLMError {
     if (error.code) {
       return error as LLMError
     }
-
     return {
       code: 'api_error',
       message: error.message || 'Unknown error occurred'
@@ -187,24 +225,52 @@ Please analyze this email and provide an appropriate response.`
   }
 
   /**
-   * Simple delay utility
+   * Delay utility
    */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
   }
 
   /**
-   * Calculate estimated cost based on token usage
+   * Calculate cost for GPT-5
    */
-  calculateCost(tokenUsage: LLMResponse['tokenUsage']): number {
-    // Rough estimates - adjust based on actual model pricing
-    const costPer1kPrompt = 0.0001 // $0.0001 per 1k tokens
-    const costPer1kCompletion = 0.0002 // $0.0002 per 1k tokens
+  calculateCost(tokenUsage: { prompt: number; completion: number; total: number }): number {
+    // GPT-5 pricing per 1M tokens
+    const costs: Record<string, { input: number; output: number }> = {
+      'gpt-5': { input: 1.25, output: 5.00 },
+      'gpt-5-mini': { input: 0.25, output: 1.00 },
+      'gpt-5-nano': { input: 0.05, output: 0.40 }
+    }
     
-    const promptCost = (tokenUsage.prompt / 1000) * costPer1kPrompt
-    const completionCost = (tokenUsage.completion / 1000) * costPer1kCompletion
+    const pricing = costs[this.model] || costs['gpt-5-nano']
+    
+    const promptCost = (tokenUsage.prompt / 1000000) * pricing.input
+    const completionCost = (tokenUsage.completion / 1000000) * pricing.output
     
     return promptCost + completionCost
+  }
+
+  /**
+   * Test connection
+   */
+  async testConnection(): Promise<{ success: boolean; message: string }> {
+    try {
+      if (!this.apiKey) {
+        return { success: false, message: 'API key not configured' }
+      }
+
+      const response = await fetch('https://api.openai.com/v1/models', {
+        headers: { 'Authorization': `Bearer ${this.apiKey}` }
+      })
+
+      if (response.ok) {
+        return { success: true, message: 'Connection successful' }
+      } else {
+        return { success: false, message: `Failed: ${response.status}` }
+      }
+    } catch (error) {
+      return { success: false, message: `Error: ${(error as Error).message}` }
+    }
   }
 }
 
