@@ -19,12 +19,17 @@ export function AgentHeader({
   avgResponseTime,
   activeProcessing
 }: AgentHeaderProps) {
-  const [currentTime, setCurrentTime] = useState(new Date())
+  const [currentTime, setCurrentTime] = useState<Date | null>(null)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
+    setMounted(true)
+    setCurrentTime(new Date())
+    
     const timer = setInterval(() => {
       setCurrentTime(new Date())
     }, 1000)
+    
     return () => clearInterval(timer)
   }, [])
 
@@ -76,15 +81,19 @@ export function AgentHeader({
             </div>
           </div>
 
-          {/* Clock */}
-          <div className="px-6 border-l border-gray-200 h-14 flex items-center bg-gray-50">
+          {/* Clock - Only render on client */}
+          <div className="px-6 border-l border-gray-200 h-14 flex items-center bg-gray-50 min-w-[140px]">
             <div className="font-mono text-sm text-gray-600">
-              {currentTime.toLocaleTimeString('en-US', { 
-                hour12: false, 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit' 
-              })} UTC
+              {mounted && currentTime ? (
+                currentTime.toLocaleTimeString('en-US', { 
+                  hour12: false, 
+                  hour: '2-digit', 
+                  minute: '2-digit', 
+                  second: '2-digit' 
+                }) + ' UTC'
+              ) : (
+                <span className="opacity-0">00:00:00 UTC</span>
+              )}
             </div>
           </div>
         </div>

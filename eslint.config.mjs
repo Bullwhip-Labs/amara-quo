@@ -2,11 +2,24 @@
 // ESLint configuration for Next.js 15
 // Using the new flat config format
 
-import eslintPluginNext from 'eslint-config-next/core-web-vitals'
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { FlatCompat } from "@eslint/eslintrc";
 
-export default [
-  eslintPluginNext,
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+});
+
+const eslintConfig = [
+  ...compat.config({
+    extends: ["next/core-web-vitals"],
+  }),
   {
-    ignores: ['.next/*', 'node_modules/*']
+    ignores: [".next/*", "node_modules/*", "*.config.*"]
   }
-]
+];
+
+export default eslintConfig;

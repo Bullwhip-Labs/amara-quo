@@ -1,24 +1,80 @@
 // /components/mission-control.tsx
-// Main mission control panel with maximize/minimize controls
-// Clean white/gray theme with comfortable viewing options
+// Main mission control panel with processing controls
+// Clean white/gray theme with LLM response display
 
 'use client'
 
 import { useState } from 'react'
 import { format } from 'date-fns'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Maximize2, Minimize2, Send, RefreshCw, AlertTriangle } from 'lucide-react'
 import { type ProcessedEmail } from '@/lib/kv-client'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { toast } from 'sonner'
 
 interface MissionControlProps {
   selectedMessage: ProcessedEmail | null
   allMessages: ProcessedEmail[]
+  onRefresh?: () => void
 }
 
 type ViewMode = 'split' | 'incoming' | 'response'
 
-export function MissionControl({ selectedMessage, allMessages }: MissionControlProps) {
+export function MissionControl({ selectedMessage, allMessages, onRefresh }: MissionControlProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('split')
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [isRetrying, setIsRetrying] = useState(false)
+
+  // Handle processing a single email
+  const handleProcessEmail = async () => {
+    if (!selectedMessage) return
+    
+    setIsProcessing(true)
+    try {
+      const response = await fetch(`/api/process/${selectedMessage.id}`, {
+        method: 'POST'
+      })
+      
+      const data = await response.json()
+      
+      if (response.ok) {
+        toast.success('Email processed successfully!')
+        onRefresh?.()
+      } else {
+        toast.error(data.message || 'Failed to process email')
+      }
+    } catch (error) {
+      console.error('Processing error:', error)
+      toast.error('Failed to connect to processing service')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Handle retrying a failed email
+  const handleRetryEmail = async () => {
+    if (!selectedMessage) return
+    
+    setIsRetrying(true)
+    try {
+      const response = await fetch(`/api/process/retry/${selectedMessage.id}`, {
+        method: 'POST'
+      })
+      
+      const data = await response.json()
+      
+      if (response.ok) {
+        toast.success('Retry successful!')
+        onRefresh?.()
+      } else {
+        toast.error(data.message || 'Failed to retry')
+      }
+    } catch (error) {
+      console.error('Retry error:', error)
+      toast.error('Failed to retry processing')
+    } finally {
+      setIsRetrying(false)
+    }
+  }
 
   if (!selectedMessage) {
     return (
@@ -43,6 +99,18 @@ export function MissionControl({ selectedMessage, allMessages }: MissionControlP
             INCOMING TRANSMISSION
           </h3>
           <div className="flex items-center space-x-2">
+            {/* Process button for pending emails */}
+            {selectedMessage.status === 'pending' && (
+              <button
+                onClick={handleProcessEmail}
+                disabled={isProcessing}
+                className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                title="Process with AI"
+              >
+                <Send className="h-3 w-3" />
+                {isProcessing ? 'Processing...' : 'Process'}
+              </button>
+            )}
             {viewMode === 'split' && (
               <button
                 onClick={() => setViewMode('incoming')}
@@ -102,6 +170,18 @@ export function MissionControl({ selectedMessage, allMessages }: MissionControlP
             AMARA RESPONSE
           </h3>
           <div className="flex items-center space-x-2">
+            {/* Retry button for failed emails */}
+            {selectedMessage.status === 'failed' && (
+              <button
+                onClick={handleRetryEmail}
+                disabled={isRetrying}
+                className="px-3 py-1 bg-amber-600 text-white text-xs rounded hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                title="Retry Processing"
+              >
+                <RefreshCw className="h-3 w-3" />
+                {isRetrying ? 'Retrying...' : 'Retry'}
+              </button>
+            )}
             {viewMode === 'split' && (
               <button
                 onClick={() => setViewMode('response')}
@@ -134,13 +214,37 @@ export function MissionControl({ selectedMessage, allMessages }: MissionControlP
                   <div>
                     <span className="text-gray-500 text-xs uppercase">Response Time:</span>
                     <div className="text-green-600 mt-0.5 font-semibold">
-                      {selectedMessage.processedAt 
-                        ? `${Math.floor(Math.random() * 5) + 1}.${Math.floor(Math.random() * 9)}s`
+                      {selectedMessage.processingTime 
+                        ? `${(selectedMessage.processingTime / 1000).toFixed(1)}s`
                         : 'N/A'
                       }
                     </div>
                   </div>
                 </div>
+                
+                {/* Token Usage Display */}
+                {selectedMessage.tokenUsage && (
+                  <div className="grid grid-cols-3 gap-2 p-2 bg-gray-50 rounded">
+                    <div>
+                      <span className="text-gray-500 text-xs uppercase">Prompt:</span>
+                      <div className="text-gray-700 text-xs font-semibold">
+                        {selectedMessage.tokenUsage.prompt}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 text-xs uppercase">Response:</span>
+                      <div className="text-gray-700 text-xs font-semibold">
+                        {selectedMessage.tokenUsage.completion}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 text-xs uppercase">Total:</span>
+                      <div className="text-purple-600 text-xs font-semibold">
+                        {selectedMessage.tokenUsage.total}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 
                 <div>
                   <span className="text-gray-500 text-xs uppercase">Status:</span>
@@ -150,7 +254,7 @@ export function MissionControl({ selectedMessage, allMessages }: MissionControlP
                 <div className="pt-3 border-t border-gray-100">
                   <div className="text-gray-700 font-sans text-base leading-relaxed">
                     {selectedMessage.response || 
-                      `I've analyzed the ${selectedMessage.category || 'request'}. The message has been processed and appropriate actions have been taken. All relevant stakeholders have been notified.`
+                      'Response data is missing. This email may have been processed before the response storage was implemented.'
                     }
                   </div>
                 </div>
@@ -165,8 +269,22 @@ export function MissionControl({ selectedMessage, allMessages }: MissionControlP
                 <span className="uppercase text-xs tracking-wider">Analyzing Transmission</span>
               </div>
             ) : selectedMessage.status === 'failed' ? (
-              <div className="text-amber-600 uppercase text-xs tracking-wider">
-                Requires Human Intervention
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-amber-600">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span className="uppercase text-xs tracking-wider font-semibold">
+                    Processing Failed
+                  </span>
+                </div>
+                {selectedMessage.error && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded">
+                    <span className="text-gray-500 text-xs uppercase">Error Details:</span>
+                    <div className="text-amber-800 text-sm mt-1">{selectedMessage.error}</div>
+                  </div>
+                )}
+                <div className="text-gray-600 text-xs">
+                  Click "Retry" above to attempt processing again.
+                </div>
               </div>
             ) : (
               <div className="text-gray-500 uppercase text-xs tracking-wider">
@@ -210,6 +328,11 @@ export function MissionControl({ selectedMessage, allMessages }: MissionControlP
             <span className="text-gray-500 uppercase">
               Synthesized: <span className="text-green-600 font-semibold">
                 {allMessages.filter(m => m.status === 'completed').length}
+              </span>
+            </span>
+            <span className="text-gray-500 uppercase">
+              Failed: <span className="text-amber-600 font-semibold">
+                {allMessages.filter(m => m.status === 'failed').length}
               </span>
             </span>
           </div>

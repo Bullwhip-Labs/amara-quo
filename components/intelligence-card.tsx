@@ -6,7 +6,7 @@ import { format } from 'date-fns'
 import { Mail, User, ChevronRight, Sparkles } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { AgentStateBadge, type AgentState } from '@/components/ui/agent-state-badge'
-import { type ProcessedEmail } from '@/lib/kv-client'
+import { type ProcessedEmail, type EmailStatus } from '@/lib/kv-client'
 
 interface IntelligenceCardProps {
   message: ProcessedEmail
@@ -15,13 +15,14 @@ interface IntelligenceCardProps {
 }
 
 export function IntelligenceCard({ message, onClick, isNew = false }: IntelligenceCardProps) {
-  // Map old status to new agent states
-  const getAgentState = (status: ProcessedEmail['status']): AgentState => {
-    const stateMap: Record<ProcessedEmail['status'], AgentState> = {
+  // Map status to agent states
+  const getAgentState = (status: EmailStatus): AgentState => {
+    const stateMap: Record<EmailStatus, AgentState> = {
       'pending': 'queued',
       'processing': 'analyzing',
       'completed': 'synthesized',
-      'failed': 'needs-review'
+      'failed': 'needs-review',
+      'manual-review': 'needs-review'
     }
     return stateMap[status]
   }

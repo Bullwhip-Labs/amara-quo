@@ -1,6 +1,6 @@
 // /app/dashboard/page.tsx
 // Amara QUO Command Center - NASA Mission Control Layout
-// Narrow feed stream on left, main operations view on right
+// Integrated with LLM processing capabilities
 
 'use client'
 
@@ -58,7 +58,16 @@ export default function DashboardPage() {
     total: emails.length,
     analyzed: emails.filter(e => e.status === 'completed').length,
     active: emails.filter(e => e.status === 'processing').length,
+    pending: emails.filter(e => e.status === 'pending').length,
   }
+
+  // Calculate average response time from processed emails
+  const avgResponseTime = (() => {
+    const processed = emails.filter(e => e.status === 'completed' && e.processingTime)
+    if (processed.length === 0) return 2.1
+    const totalTime = processed.reduce((sum, e) => sum + (e.processingTime || 0), 0)
+    return totalTime / processed.length / 1000 // Convert to seconds
+  })()
 
   if (error) {
     return (
@@ -83,9 +92,20 @@ export default function DashboardPage() {
       <AgentHeader 
         totalIntel={stats.total}
         analyzedCount={stats.analyzed}
-        avgResponseTime={2.1}
+        avgResponseTime={avgResponseTime}
         activeProcessing={stats.active}
       />
+
+      {/* Status Bar - Optional: Shows pending count */}
+      {stats.pending > 0 && (
+        <div className="bg-white border-b border-gray-200 px-6 py-2">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              {stats.pending} emails pending - Select individual emails to process
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Layout */}
       <div className="flex-1 flex min-h-0">
@@ -103,6 +123,7 @@ export default function DashboardPage() {
           <MissionControl 
             selectedMessage={selectedMessage}
             allMessages={emails}
+            onRefresh={refetch}
           />
         </div>
       </div>
