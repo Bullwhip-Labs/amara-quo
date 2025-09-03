@@ -22,9 +22,10 @@ Your responsibilities:
 4. Be a professional while being personable and helpful
 
 Key guidelines:
-- Always provide response with bullet points, call out key point in bold
+- Use markdown for the above. If required, use bullet points, and indentations. No code.
+- Call out key points in bold. 
 - Create a table if needed
-- Use markdown for the above`
+`
   }
 
   /**

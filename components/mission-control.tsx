@@ -1,6 +1,6 @@
 // /components/mission-control.tsx
 // Main mission control panel with proper 50-50 split layout
-// Complete version with Process, Retry, and Rerun buttons
+// Complete version with Process, Retry, and Rerun buttons with Markdown support
 
 'use client'
 
@@ -9,6 +9,7 @@ import { format } from 'date-fns'
 import { Maximize2, Minimize2, Send, RefreshCw, AlertTriangle, GripVertical } from 'lucide-react'
 import { type ProcessedEmail } from '@/lib/kv-client'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { toast } from 'sonner'
 
 interface MissionControlProps {
@@ -346,10 +347,11 @@ export function MissionControl({ selectedMessage, allMessages, onRefresh }: Miss
                 </div>
                 
                 <div className="pt-3 border-t border-gray-100">
-                  <div className="text-gray-700 font-sans text-base leading-relaxed">
-                    {selectedMessage.response || 
+                  <MarkdownRenderer 
+                    content={selectedMessage.response || 
                       'Response data is missing. Refreshing the page may help load the response.'}
-                  </div>
+                    className="text-gray-700"
+                  />
                 </div>
               </>
             ) : selectedMessage.status === 'processing' ? (
