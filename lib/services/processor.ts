@@ -1,9 +1,11 @@
 // /lib/services/processor.ts
-// Core email processing engine with enhanced debugging
-// Comprehensive logging for response tracking
+// Core email processing engine with Resend integration
+// Automatically sends responses after successful LLM processing
 
 import { emailStore, type ProcessedEmail, type EmailStatus } from '@/lib/kv-client'
-import { llmService, type LLMResponse, type LLMError } from './llm-service'
+import { llmFactory } from './llm-factory'
+import { emailService } from './email-service'
+import type { LLMResponse, LLMError } from './llm-service'
 
 export type ProcessingStatus = EmailStatus
 
@@ -15,6 +17,8 @@ export interface ProcessingResult {
   processingTime?: number
   error?: string
   processedAt: string
+  emailSent?: boolean
+  deliveryMessageId?: string
 }
 
 export interface ProcessingQueueItem {
@@ -32,7 +36,7 @@ class EmailProcessor {
   private currentlyProcessing: Set<string> = new Set()
 
   /**
-   * Process a single email with comprehensive logging
+   * Process a single email with comprehensive logging and email delivery
    */
   async processEmail(emailId: string, isRerun: boolean = false): Promise<ProcessingResult> {
     console.log(`\n${'='.repeat(60)}`)
@@ -73,6 +77,7 @@ class EmailProcessor {
       console.log(`   Subject: ${email.subject}`)
       console.log(`   Body preview: ${(email.body || email.snippet).substring(0, 100)}...`)
       
+      const llmService = llmFactory.getService()
       const llmResponse = await llmService.processEmail(email)
 
       // Log the FULL response
@@ -88,21 +93,55 @@ class EmailProcessor {
       console.log(llmResponse.content || '[EMPTY RESPONSE]')
       console.log(`${'='.repeat(60)}\n`)
 
-      // Step 5: Store the response
-      console.log(`💾 Step 5: Storing response in KV...`)
+      // Step 5: Send email response
+      console.log(`📧 Step 5: Sending email response...`)
+      let emailSent = false
+      let deliveryMessageId: string | undefined
+      let deliveryStatus: ProcessedEmail['deliveryStatus'] = 'pending'
+      let deliveryError: string | undefined
+
+      if (emailService.isConfigured()) {
+        const emailResult = await emailService.sendResponse(email, llmResponse.content)
+        
+        if (emailResult.success) {
+          console.log(`✅ Email sent successfully!`)
+          console.log(`   Message ID: ${emailResult.messageId}`)
+          emailSent = true
+          deliveryMessageId = emailResult.messageId
+          deliveryStatus = 'sent'
+        } else {
+          console.warn(`⚠️ Email send failed: ${emailResult.error}`)
+          deliveryError = emailResult.error
+          deliveryStatus = 'failed'
+          // Don't fail the entire processing if email sending fails
+        }
+      } else {
+        console.log(`📧 Email service not configured - skipping email delivery`)
+        const config = emailService.getConfiguration()
+        console.log(`   Config:`, config)
+      }
+
+      // Step 6: Store the response with delivery status
+      console.log(`\n💾 Step 6: Storing response and delivery status in KV...`)
       console.log(`   - Response length to store: ${llmResponse.content.length}`)
+      console.log(`   - Email sent: ${emailSent}`)
+      console.log(`   - Delivery status: ${deliveryStatus}`)
       
       await emailStore.updateEmailStatus(emailId, 'completed', {
         response: llmResponse.content,
         processedAt: new Date().toISOString(),
         tokenUsage: llmResponse.tokenUsage,
-        processingTime: llmResponse.processingTime
+        processingTime: llmResponse.processingTime,
+        category: llmResponse.category,
+        deliveryStatus: deliveryStatus,
+        deliveredAt: emailSent ? new Date().toISOString() : undefined,
+        error: deliveryError // Store delivery error if any
       })
 
       console.log(`✅ Response stored with status 'completed'`)
 
-      // Step 6: Verify the response was stored
-      console.log(`\n🔍 Step 6: Verifying stored response...`)
+      // Step 7: Verify the response was stored
+      console.log(`\n🔍 Step 7: Verifying stored response...`)
       const verifyEmail = await emailStore.getEmail(emailId)
       
       console.log(`📋 Verification Results:`)
@@ -110,6 +149,8 @@ class EmailProcessor {
       console.log(`   - Status: ${verifyEmail?.status}`)
       console.log(`   - Has response: ${!!verifyEmail?.response}`)
       console.log(`   - Response length: ${verifyEmail?.response?.length || 0}`)
+      console.log(`   - Email sent: ${verifyEmail?.deliveryStatus === 'sent'}`)
+      console.log(`   - Delivery status: ${verifyEmail?.deliveryStatus}`)
       
       if (verifyEmail?.response) {
         console.log(`\n💬 STORED RESPONSE PREVIEW:`)
@@ -128,6 +169,8 @@ class EmailProcessor {
       console.log(`   - Email ID: ${emailId}`)
       console.log(`   - Status: completed`)
       console.log(`   - Response stored: ${!!verifyEmail?.response}`)
+      console.log(`   - Email sent: ${emailSent}`)
+      console.log(`   - Delivery ID: ${deliveryMessageId || 'N/A'}`)
       console.log(`   - Tokens used: ${llmResponse.tokenUsage.total}`)
       console.log(`   - Time: ${llmResponse.processingTime}ms`)
       console.log(`${'='.repeat(60)}\n`)
@@ -138,7 +181,9 @@ class EmailProcessor {
         response: llmResponse.content,
         tokenUsage: llmResponse.tokenUsage,
         processingTime: llmResponse.processingTime,
-        processedAt: new Date().toISOString()
+        processedAt: new Date().toISOString(),
+        emailSent,
+        deliveryMessageId
       }
       
     } catch (error) {
@@ -154,14 +199,16 @@ class EmailProcessor {
       
       await emailStore.updateEmailStatus(emailId, status, {
         error: errorMessage,
-        processedAt: new Date().toISOString()
+        processedAt: new Date().toISOString(),
+        deliveryStatus: 'failed'
       })
 
       return {
         emailId,
         status,
         error: errorMessage,
-        processedAt: new Date().toISOString()
+        processedAt: new Date().toISOString(),
+        emailSent: false
       }
     }
   }
@@ -222,7 +269,9 @@ class EmailProcessor {
     }
 
     await emailStore.updateEmailStatus(emailId, 'pending', {
-      error: undefined
+      error: undefined,
+      deliveryStatus: undefined,
+      deliveredAt: undefined
     })
 
     return this.processEmail(emailId)
@@ -257,6 +306,7 @@ class EmailProcessor {
     completed: number
     failed: number
     totalProcessed: number
+    emailsSent: number
   }> {
     const allEmails = await emailStore.getAllEmails()
     
@@ -265,7 +315,8 @@ class EmailProcessor {
       processing: allEmails.filter(e => e.status === 'processing').length,
       completed: allEmails.filter(e => e.status === 'completed').length,
       failed: allEmails.filter(e => e.status === 'failed' || e.status === 'manual-review').length,
-      totalProcessed: allEmails.filter(e => e.status === 'completed' || e.status === 'failed' || e.status === 'manual-review').length
+      totalProcessed: allEmails.filter(e => e.status === 'completed' || e.status === 'failed' || e.status === 'manual-review').length,
+      emailsSent: allEmails.filter(e => e.deliveryStatus === 'sent').length
     }
 
     return stats
@@ -290,6 +341,7 @@ class EmailProcessor {
     }
     
     const total = totalPrompt + totalCompletion
+    const llmService = llmFactory.getService()
     const estimatedCost = llmService.calculateCost({ 
       prompt: totalPrompt, 
       completion: totalCompletion, 
@@ -302,6 +354,13 @@ class EmailProcessor {
       total,
       estimatedCost
     }
+  }
+
+  /**
+   * Get email service configuration
+   */
+  getEmailServiceConfig() {
+    return emailService.getConfiguration()
   }
 }
 
