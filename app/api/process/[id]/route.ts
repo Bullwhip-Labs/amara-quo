@@ -3,7 +3,7 @@
 // Handles individual email processing requests
 
 import { NextRequest, NextResponse } from 'next/server'
-import { emailProcessor } from '@/lib/services/processor'
+import { emailProcessor } from '@/lib/services/email/processor'
 
 // POST /api/process/[id] - Process a specific email
 export async function POST(

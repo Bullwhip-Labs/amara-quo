@@ -3,9 +3,9 @@
 // Automatically sends responses after successful LLM processing
 
 import { emailStore, type ProcessedEmail, type EmailStatus } from '@/lib/kv-client'
-import { llmFactory } from './llm-factory'
+import { llmFactory } from '../llm/llm-factory'
 import { emailService } from './email-service'
-import type { LLMResponse, LLMError } from './llm-service'
+import type { LLMResponse, LLMError } from '../llm/llm-service'
 
 export type ProcessingStatus = EmailStatus
 

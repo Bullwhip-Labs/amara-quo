@@ -3,7 +3,7 @@
 // Handles retry requests for emails that failed processing
 
 import { NextRequest, NextResponse } from 'next/server'
-import { emailProcessor } from '@/lib/services/processor'
+import { emailProcessor } from '@/lib/services/email/processor'
 
 // POST /api/process/retry/[id] - Retry processing for a failed email
 export async function POST(

@@ -4,7 +4,7 @@
 
 import { NextResponse } from 'next/server'
 import { emailStore } from '@/lib/kv-client'
-import { emailProcessor } from '@/lib/services/processor'
+import { emailProcessor } from '@/lib/services/email/processor'
 
 export async function GET() {
   try {

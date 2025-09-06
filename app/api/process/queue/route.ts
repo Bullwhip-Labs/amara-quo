@@ -3,7 +3,7 @@
 // Processes all pending emails in the queue
 
 import { NextRequest, NextResponse } from 'next/server'
-import { emailProcessor } from '@/lib/services/processor'
+import { emailProcessor } from '@/lib/services/email/processor'
 
 export async function POST(request: NextRequest) {
   try {
