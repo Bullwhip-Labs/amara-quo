@@ -32,7 +32,7 @@ export default function DashboardPage() {
   const { data: emails = [], isLoading, error, refetch } = useQuery({
     queryKey: ['emails'],
     queryFn: fetchEmails,
-    refetchInterval: 30000,
+    refetchInterval: 15000,
   })
 
   // Polling query for new emails
